@@ -1,0 +1,694 @@
+---
+title: "Playoff Shots"
+output: pdf_document
+date: "2023-03-29"
+---
+
+See article using this code here: https://bestballstats.com/2023/03/28/shot-selection-a-surprising-playoff-advantage-or-disadvantage/
+
+This project looks at how shot selection changes from the regular season to the playoffs. Seeing how shot selection changes can provide insights things like how teams sshould structure rosters best suited for the Playoffs (at least offensively). 
+
+First, we must load in the necessary packages. The `hoopR` package is a great tool for gathering basketball stats. 
+
+```{r}
+#| label: load-packages
+
+library(tidyverse)
+library(ggimage)
+library(hoopR)
+
+```
+
+Using the `hoopR` functions, we can gather shot location data. The function below gets shot location data for the specified years in either the regular season or playoffs. The shot locations used were: Restricted Area, In the Paint (Non-Restricted Area), Midrange, Corner 3, Above the Break 3, and Free Throws.
+
+
+```{r}
+#| label: get-shots
+
+getShots <- function(start_yr, end_yr, season_type = "Regular Season") {
+  all_szns <- tibble()
+  
+  for (i in c(start_yr:end_yr)) {
+    szn_name <- paste(i-1, "-", i %% 100, sep = "")
+    print(paste("Loading Stats For", szn_name, sep = " "))
+    
+    yr_shotloc <- nba_leaguedashteamshotlocations(distance_range = "By Zone",
+                                                  season = szn_name,
+                                                  season_type = season_type)
+    yr_shotloc <- yr_shotloc[["ShotLocations"]]
+    yr_shotloc <- yr_shotloc %>%
+      mutate_at(3:26, as.numeric) 
+    
+    basic <- nba_leaguedashteamstats(measure_type = "Advanced",
+                                     season = szn_name,
+                                     season_type = season_type)
+    basic <- basic[["LeagueDashTeamStats"]]
+    basic <- basic %>%
+      select(TEAM_ID, TEAM_NAME, GP, MIN, POSS) %>%
+      mutate_at(3:5, as.numeric)
+    
+    ft <- nba_leaguedashteamstats(measure_type = "Base",
+                                  season = szn_name,
+                                  season_type = season_type)
+    ft <- ft[["LeagueDashTeamStats"]]
+    
+    ft <- ft %>%
+      select(TEAM_ID, TEAM_NAME, FTM, FTA) %>%
+      mutate_at(3:4, as.numeric)
+    
+    yr_shotloc <- yr_shotloc %>%
+      left_join(ft, by = c("TEAM_ID","TEAM_NAME")) %>%
+      left_join(basic, by = c("TEAM_ID","TEAM_NAME")) %>%
+      mutate(Season = i) 
+    
+    all_szns <- rbind(all_szns, yr_shotloc)
+  }
+  
+  return( all_szns )
+}
+
+# rsShots <- getShots(2015, 2022)
+# plShots <- getShots(2015, 2022, "Playoffs")
+
+# If the function do not work (or are taking too long), uncomment the lines below:
+rsShots <- read_csv(file = "https://raw.githubusercontent.com/AyushBatra15/Playoff-Shot-Selection/main/data/tm_shots_rs.csv")
+plShots <- read_csv(file = "https://raw.githubusercontent.com/AyushBatra15/Playoff-Shot-Selection/main/data/tm_shots_pl.csv")
+
+```
+
+First, we can look at how shot selection has changed over time. The following code produces a graph that shows how the shot distribution by zone has changed since 2015.
+
+Note: Free throws have to be multiplied by 0.44 to convert into shot opportunities because one possession usually end with several free throws if a player is fouled. The most used multiplier is 0.44, so I use that here. 
+
+```{r}
+#| label: reg-szn-time
+
+allTeamsRS <- rsShots %>%
+  group_by(Season) %>%
+  summarize(RA_FGM = sum(Restricted_Area_FGM),
+            RA_FGA = sum(Restricted_Area_FGA),
+            PT_FGM = sum(In_The_Paint_Non_RA_FGM),
+            PT_FGA = sum(In_The_Paint_Non_RA_FGA),
+            MR_FGM = sum(Mid_Range_FGM),
+            MR_FGA = sum(Mid_Range_FGA),
+            AB_FG3M = sum(Above_the_Break_3_FGM),
+            AB_FG3A = sum(Above_the_Break_3_FGA),
+            CN_FG3M = sum(Corner_3_FGM),
+            CN_FG3A = sum(Corner_3_FGA),
+            FTM = sum(FTM),
+            FTA = sum(FTA)) %>%
+  ungroup()
+
+rs_dist_plot <- allTeamsRS %>%
+  mutate(Total_FGA = RA_FGA + MR_FGA + PT_FGA + AB_FG3A + CN_FG3A + 0.44*FTA,
+         Pct_RA = RA_FGA/Total_FGA,
+         Pct_MR = MR_FGA/Total_FGA,
+         Pct_PT = PT_FGA/Total_FGA,
+         Pct_AB3 = AB_FG3A/Total_FGA,
+         Pct_CN3 = CN_FG3A/Total_FGA,
+         Pct_FT = 0.44*FTA/Total_FGA) %>%
+  select(Season, Pct_RA:Pct_FT) %>%
+  pivot_longer(!Season, names_prefix = "Pct_", 
+               names_to = "ShotType",
+               values_to = "Pct") %>%
+  ggplot(aes(x = Season, y = Pct, color = ShotType)) +
+  geom_point(size = 3) +
+  geom_line(linewidth = 1) +
+  labs(x = "Season", 
+       y = "% of Shot Attempts",
+       color = "Shot Type",
+       title = "NBA Shot Distributions: Regular Season",
+       caption = "Data via NBA.com | Graph by Ayush Batra") +
+  scale_y_continuous(labels = scales::percent,
+                     limits = c(0.05, 0.3)) +
+  scale_color_discrete(labels = c("Above Break 3",
+                                  "Corner 3",
+                                  "Free Throw",
+                                  "Midrange",
+                                  "Paint (Non-RA)",
+                                  "Restricted Area")) +
+  theme(panel.grid.minor.y = element_line())
+
+rs_dist_plot
+
+```
+
+We can do the same for Playoff shot selection and compare:
+
+```{r}
+#| label: playoffs-time
+
+allTeamsPL <- plShots %>%
+  group_by(Season) %>%
+  summarize(RA_FGM = sum(Restricted_Area_FGM),
+            RA_FGA = sum(Restricted_Area_FGA),
+            PT_FGM = sum(In_The_Paint_Non_RA_FGM),
+            PT_FGA = sum(In_The_Paint_Non_RA_FGA),
+            MR_FGM = sum(Mid_Range_FGM),
+            MR_FGA = sum(Mid_Range_FGA),
+            AB_FG3M = sum(Above_the_Break_3_FGM),
+            AB_FG3A = sum(Above_the_Break_3_FGA),
+            CN_FG3M = sum(Corner_3_FGM),
+            CN_FG3A = sum(Corner_3_FGA),
+            FTM = sum(FTM),
+            FTA = sum(FTA)) %>%
+  ungroup()
+
+pl_dist_plot <- allTeamsPL %>%
+  mutate(Total_FGA = RA_FGA + MR_FGA + PT_FGA + AB_FG3A + CN_FG3A + 0.44*FTA,
+         Pct_RA = RA_FGA/Total_FGA,
+         Pct_MR = MR_FGA/Total_FGA,
+         Pct_PT = PT_FGA/Total_FGA,
+         Pct_AB3 = AB_FG3A/Total_FGA,
+         Pct_CN3 = CN_FG3A/Total_FGA,
+         Pct_FT = 0.44*FTA/Total_FGA) %>%
+  select(Season, Pct_RA:Pct_FT) %>%
+  pivot_longer(!Season, names_prefix = "Pct_",
+               names_to = "ShotType",
+               values_to = "Pct") %>%
+  ggplot(aes(x = Season, y = Pct, color = ShotType)) +
+  geom_point(size = 3) +
+  geom_line(linewidth = 1) +
+  labs(x = "Season", 
+       y = "% of Shot Attempts",
+       color = "Shot Type",
+       title = "NBA Shot Distributions: Playoffs",
+       caption = "Data via NBA.com | Graph by Ayush Batra") +
+  scale_y_continuous(labels = scales::percent,
+                     limits = c(0.05, 0.3)) +
+  scale_color_discrete(labels = c("Above Break 3",
+                                  "Corner 3",
+                                  "Free Throw",
+                                  "Midrange",
+                                  "Paint (Non-RA)",
+                                  "Restricted Area")) +
+  theme(panel.grid.minor.y = element_line())
+
+pl_dist_plot
+
+```
+
+If we look at the two previous graphs, we can see where they differ. In the regular season, shots in the restricted area have been the most common from 2015 to 2021, but above break 3-point attempts overtook them as the most common shot in 2022. 
+
+It can be observed that shot distributions in the Playoffs have been similar to the regular season. However, there are some interesting trends that are unique to the Playoffs. The share of shots in the restricted area has been steadily decreasing since 2018. In contrast, the share of shots in the paint but not the restricted area has been increasing. It is possible that defenses are trying to take away the offense’s most efficient shot in the Playoffs by preventing shots very close to the rim and making them a little farther away. 
+
+Next, we can see which shots are the most efficient. Additionally, we want to see if efficiency changes in the Playoffs. The code below produces the field goal percentage by zone for the playoffs and regular season. 
+
+```{r}
+#| label: efficiency
+
+tmp <- plShots %>%
+  mutate(seasonType = "Playoffs")
+
+allShots <- rsShots %>%
+  mutate(seasonType = "Regular") %>%
+  rbind(tmp)
+
+eff_graph <- allShots %>%
+  group_by(seasonType) %>%
+  summarize(RA_FGP = sum(Restricted_Area_FGM)/sum(Restricted_Area_FGA),
+            PT_FGP = sum(In_The_Paint_Non_RA_FGM)/sum(In_The_Paint_Non_RA_FGA),
+            MR_FGP = sum(Mid_Range_FGM)/sum(Mid_Range_FGA),
+            AB_FG3P = sum(Above_the_Break_3_FGM)/sum(Above_the_Break_3_FGA),
+            CN_FG3P = sum(Corner_3_FGM)/sum(Corner_3_FGA),
+            FT_FTP = sum(FTM)/sum(FTA)) %>%
+  ungroup() %>%
+  pivot_longer(!seasonType, names_sep = "_",
+               names_to = c("zone","shotValue"),
+               values_to = "pct") %>%
+  filter(zone != "FT") %>%
+  mutate(seasonType = factor(seasonType, levels = c("Regular", "Playoffs"))) %>%
+  ggplot(aes(x = zone, y = pct, fill = seasonType)) +
+  geom_col(position = 'dodge', width = 0.8, color = 'black') +
+  labs(x = "Shot Type",
+       y = "Field Goal Percentage",
+       fill = "Season Type",
+       title = "Shooting Efficiency Doesn't Change in Playoffs",
+       caption = "Data via NBA.com | Graph by Ayush Batra") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_discrete(labels = c("Above Break 3", 
+                              "Corner3", 
+                              "Midrange", 
+                              "Paint", 
+                              "Restricted Area")) +
+  theme(panel.grid.minor.y = element_line(),
+        legend.position = 'top')
+
+eff_graph
+```
+
+From the graph, one can observe that shots in the restricted area have the greatest field goal percentage (not counting free throws), and it’s not even close. In addition, the actual field goal percentage by shot location doesn’t seem to change in the Playoffs; rather, the reason that offensive efficiency is lower in the Playoffs is that offenses are forced to take lower percentage shot attempts.
+
+It was observed previously that the share of shot attempts in the restricted area was declining in the Playoffs while the share of shots in the paint (non-restricted area) has been increasing. Shots in the restricted area have much greater value to the offense than shots in the paint (non-restricted area), as teams shoot over 60% in the restricted area but just about 40% in the latter portion of the paint. Although this may be surprising at first, it does make sense. Shots in the restricted area often include dunks and easier layups while shots in the back half of the paint usually consist of runners, floaters, or short jumpers.
+
+Let's see how shot selection has changed during the Playoffs from 2015-2022 using another side-by-side bar graph:
+
+```{r}
+#| label: change-shots
+
+ss_change_plot <- allShots %>%
+  group_by(seasonType) %>%
+  summarize(Total_RA_FGA = sum(Restricted_Area_FGA),
+            Total_PT_FGA = sum(In_The_Paint_Non_RA_FGA),
+            Total_MR_FGA = sum(Mid_Range_FGA),
+            Total_AB_FG3A = sum(Above_the_Break_3_FGA),
+            Total_CN_FG3A = sum(Corner_3_FGA),
+            Total_FTA = sum(FTA)) %>%
+  ungroup() %>%
+  mutate(Total_Shots = Total_RA_FGA + Total_PT_FGA + Total_MR_FGA + Total_AB_FG3A +
+           Total_CN_FG3A + 0.44*Total_FTA,
+         Pct_RA = Total_RA_FGA / Total_Shots,
+         Pct_PT = Total_PT_FGA / Total_Shots,
+         Pct_MR = Total_MR_FGA / Total_Shots,
+         Pct_AB3 = Total_AB_FG3A / Total_Shots,
+         Pct_CN3 = Total_CN_FG3A / Total_Shots,
+         Pct_FT = 0.44*Total_FTA / Total_Shots) %>%
+  select(seasonType, Pct_RA : Pct_FT) %>%
+  pivot_longer(!seasonType, names_prefix = "Pct_",
+               names_to = "zone",
+               values_to = "pct") %>%
+  mutate(seasonType = factor(seasonType, levels = c("Regular","Playoffs"))) %>%
+  ggplot(aes(x = zone, y = pct, fill = seasonType)) +
+  geom_col(position = 'dodge', color = 'black', width = 0.8) +
+  labs(x = "Zone",
+       y = "% of Scoring Attempts",
+       fill = "Season Type",
+       title = "How Playoff Shot Selection Changes",
+       subtitle = "2015-2022 Seasons",
+       caption = "Data via NBA.com | Graph by Ayush Batra") +
+  scale_y_continuous(labels = scales::percent,
+                     breaks = seq(0,0.3,0.1),
+                     limits = c(0,0.3)) +
+  scale_x_discrete(labels = c("Above Break 3",
+                              "Corner 3",
+                              "Free Throw",
+                              "Midrange",
+                              "Paint",
+                              "Restricted Area")) +
+  theme(panel.grid.minor.y = element_line(),
+        legend.position = 'top')
+
+ss_change_plot
+
+```
+
+It seems like defenses are limiting the amount of shots opponents get in the restricted area. However, if we are looking at the data from 2015-2022, we don’t see a stark increase in paint shots in the Playoffs. Instead, when looking over the entire sample, the shots that the defense prevents in the restricted area seem to be allocated almost evenly between above break 3’s, corner 3’s, free throws, and paint (non-restricted area) shots.
+
+What if we just look at 2022, though:
+
+```{r}
+#| label: change-2022
+
+ss_ch22_plot <- allShots %>%
+  filter(Season == 2022) %>%
+  group_by(seasonType) %>%
+  summarize(Total_RA_FGA = sum(Restricted_Area_FGA),
+            Total_PT_FGA = sum(In_The_Paint_Non_RA_FGA),
+            Total_MR_FGA = sum(Mid_Range_FGA),
+            Total_AB_FG3A = sum(Above_the_Break_3_FGA),
+            Total_CN_FG3A = sum(Corner_3_FGA),
+            Total_FTA = sum(FTA)) %>%
+  ungroup() %>%
+  mutate(Total_Shots = Total_RA_FGA + Total_PT_FGA + Total_MR_FGA + Total_AB_FG3A +
+           Total_CN_FG3A + 0.44*Total_FTA,
+         Pct_RA = Total_RA_FGA / Total_Shots,
+         Pct_PT = Total_PT_FGA / Total_Shots,
+         Pct_MR = Total_MR_FGA / Total_Shots,
+         Pct_AB3 = Total_AB_FG3A / Total_Shots,
+         Pct_CN3 = Total_CN_FG3A / Total_Shots,
+         Pct_FT = 0.44*Total_FTA / Total_Shots) %>%
+  select(seasonType, Pct_RA : Pct_FT) %>%
+  pivot_longer(!seasonType, names_prefix = "Pct_",
+               names_to = "zone",
+               values_to = "pct") %>%
+  mutate(seasonType = factor(seasonType, levels = c("Regular","Playoffs"))) %>%
+  ggplot(aes(x = zone, y = pct, fill = seasonType)) +
+  geom_col(position = 'dodge', color = 'black', width = 0.8) +
+  labs(x = "Zone",
+       y = "% of Scoring Attempts",
+       fill = "Season Type",
+       title = "How Playoff Shot Selection Changes",
+       subtitle = "2022 Season Only",
+       caption = "Data via NBA.com | Graph by Ayush Batra") +
+  scale_y_continuous(labels = scales::percent,
+                     limits = c(0,0.3)) +
+  scale_x_discrete(labels = c("Above Break 3",
+                              "Corner 3",
+                              "Free Throw",
+                              "Midrange",
+                              "Paint",
+                              "Restricted Area")) +
+  theme(panel.grid.minor.y = element_line(),
+        legend.position = 'top')
+
+ss_ch22_plot
+
+```
+
+If we look at just the data from the 2022 regular season and playoffs, we find that there is a larger decrease in restricted area shot attempts. Additionally, it looks like the shots lost in the restricted area are allocated mostly to non-restricted area paint shots, but also somewhat to all the other shot regions.
+
+Let's look at some examples of the teams with the biggest decrease in restricted area shots in the playoffs. The following code produces the teams with the greatest decrease in the share of restricted area shots from the regular season to the playoffs (I only included teams that advanced to at least the 2nd round in order to remove observations that may arise because of very few games played in the Playoffs)
+
+```{r}
+#| label: biggest-change
+
+allShots %>%
+  mutate(Total_Shots = Restricted_Area_FGA + In_The_Paint_Non_RA_FGA + Mid_Range_FGA +
+           Above_the_Break_3_FGA + Corner_3_FGA + 0.44*FTA,
+         Pct_RA = Restricted_Area_FGA / Total_Shots) %>%
+  select(TEAM_NAME, Season, seasonType, GP, Pct_RA) %>%
+  pivot_wider(id_cols = c(TEAM_NAME, Season),
+              names_from = seasonType,
+              values_from = c(GP, Pct_RA)) %>%
+  mutate(Diff = Pct_RA_Playoffs - Pct_RA_Regular) %>%
+  filter(GP_Playoffs >= 8) %>%
+  arrange(Diff) %>%
+  select(TEAM_NAME, Season, GP_Playoffs, Pct_RA_Regular, Pct_RA_Playoffs, Diff) %>%
+  head()
+
+```
+
+In just last year's postseason, we saw both the Warriors and Mavericks have a huge decrease in restricted area shots. Let's see how they made up for this decrease. First, we can look at the Warriors:
+
+```{r}
+#| label: gsw-2022
+
+gsw_plot <- allShots %>%
+  filter(TEAM_NAME == "Golden State Warriors",
+         Season == 2022) %>%
+  group_by(seasonType) %>%
+  summarize(Total_RA_FGA = sum(Restricted_Area_FGA),
+            Total_PT_FGA = sum(In_The_Paint_Non_RA_FGA),
+            Total_MR_FGA = sum(Mid_Range_FGA),
+            Total_AB_FG3A = sum(Above_the_Break_3_FGA),
+            Total_CN_FG3A = sum(Corner_3_FGA),
+            Total_FTA = sum(FTA)) %>%
+  ungroup() %>%
+  mutate(Total_Shots = Total_RA_FGA + Total_PT_FGA + Total_MR_FGA + Total_AB_FG3A +
+           Total_CN_FG3A + 0.44*Total_FTA,
+         Pct_RA = Total_RA_FGA / Total_Shots,
+         Pct_PT = Total_PT_FGA / Total_Shots,
+         Pct_MR = Total_MR_FGA / Total_Shots,
+         Pct_AB3 = Total_AB_FG3A / Total_Shots,
+         Pct_CN3 = Total_CN_FG3A / Total_Shots,
+         Pct_FT = 0.44*Total_FTA / Total_Shots) %>%
+  select(seasonType, Pct_RA : Pct_FT) %>%
+  pivot_longer(!seasonType, names_prefix = "Pct_",
+               names_to = "zone",
+               values_to = "pct") %>%
+  mutate(seasonType = factor(seasonType, levels = c("Regular","Playoffs"))) %>%
+  ggplot(aes(x = zone, y = pct, fill = seasonType)) +
+  geom_col(position = 'dodge', color = 'black', width = 0.8) +
+  labs(x = "Zone",
+       y = "% of Scoring Attempts",
+       fill = "Season Type",
+       title = "Golden State Warriors 2022 Shot Distribution",
+       subtitle = "2022 Season",
+       caption = "Data via NBA.com | Graph by Ayush Batra") +
+  scale_y_continuous(labels = scales::percent) +
+  theme(panel.grid.minor.y = element_line(),
+        legend.position = 'top')
+
+gsw_plot
+
+```
+
+The Warriors saw an increase of 8% for shots in the paint (non-restricted area) in last year’s Playoffs. About 14% of their shot opportunities came from this area in the regular season, but it shot up to 22% in the Playoffs. This contrasts to the reduction in shot attempts from the restricted area. The Warriors responded to opponents taking away shots in the restricted area by taking more shots in the latter portion of the paint, including floaters, runners, and short jumpers. 
+
+How about the Mavs:
+
+```{r}
+#| label: dal-2022
+
+dal_plot <- allShots %>%
+  filter(TEAM_NAME == "Dallas Mavericks",
+         Season == 2022) %>%
+  group_by(seasonType) %>%
+  summarize(Total_RA_FGA = sum(Restricted_Area_FGA),
+            Total_PT_FGA = sum(In_The_Paint_Non_RA_FGA),
+            Total_MR_FGA = sum(Mid_Range_FGA),
+            Total_AB_FG3A = sum(Above_the_Break_3_FGA),
+            Total_CN_FG3A = sum(Corner_3_FGA),
+            Total_FTA = sum(FTA)) %>%
+  ungroup() %>%
+  mutate(Total_Shots = Total_RA_FGA + Total_PT_FGA + Total_MR_FGA + Total_AB_FG3A +
+           Total_CN_FG3A + 0.44*Total_FTA,
+         Pct_RA = Total_RA_FGA / Total_Shots,
+         Pct_PT = Total_PT_FGA / Total_Shots,
+         Pct_MR = Total_MR_FGA / Total_Shots,
+         Pct_AB3 = Total_AB_FG3A / Total_Shots,
+         Pct_CN3 = Total_CN_FG3A / Total_Shots,
+         Pct_FT = 0.44*Total_FTA / Total_Shots) %>%
+  select(seasonType, Pct_RA : Pct_FT) %>%
+  pivot_longer(!seasonType, names_prefix = "Pct_",
+               names_to = "zone",
+               values_to = "pct") %>%
+  mutate(seasonType = factor(seasonType, levels = c("Regular","Playoffs"))) %>%
+  ggplot(aes(x = zone, y = pct, fill = seasonType)) +
+  geom_col(position = 'dodge', color = 'black', width = 0.8) +
+  labs(x = "Zone",
+       y = "% of Scoring Attempts",
+       fill = "Season Type",
+       title = "Dallas Mavericks 2022 Shot Distribution",
+       subtitle = "2022 Season",
+       caption = "Data via NBA.com | Graph by Ayush Batra") +
+  scale_y_continuous(labels = scales::percent) +
+  theme(panel.grid.minor.y = element_line(),
+        legend.position = 'top')
+
+dal_plot
+
+```
+
+The Dallas Mavericks’ share of shot attempts from the restricted area fell from 22% in the regular season to 15% in the Playoffs. However, while their paint attempts increased, they also saw increases in shots from 3-point range and from the free throw line (as midrange attempts also went down). It can be concluded that teams can overcome a reduction in restricted area shots with a variety of changes.
+
+If you want to see another team's changes from the regular season to the Playoffs, you can edit the code below. Choose a team and year by changing the `myTEAM` and `mySEASON` variables, then run the plot and see the changes!
+
+```{r}
+#| label: team-plot
+
+myTEAM = "Denver Nuggets"
+mySEASON = 2022
+
+tm_plot <- allShots %>%
+  filter(TEAM_NAME == myTEAM,
+         Season == mySEASON) %>%
+  group_by(seasonType) %>%
+  summarize(Total_RA_FGA = sum(Restricted_Area_FGA),
+            Total_PT_FGA = sum(In_The_Paint_Non_RA_FGA),
+            Total_MR_FGA = sum(Mid_Range_FGA),
+            Total_AB_FG3A = sum(Above_the_Break_3_FGA),
+            Total_CN_FG3A = sum(Corner_3_FGA),
+            Total_FTA = sum(FTA)) %>%
+  ungroup() %>%
+  mutate(Total_Shots = Total_RA_FGA + Total_PT_FGA + Total_MR_FGA + Total_AB_FG3A +
+           Total_CN_FG3A + 0.44*Total_FTA,
+         Pct_RA = Total_RA_FGA / Total_Shots,
+         Pct_PT = Total_PT_FGA / Total_Shots,
+         Pct_MR = Total_MR_FGA / Total_Shots,
+         Pct_AB3 = Total_AB_FG3A / Total_Shots,
+         Pct_CN3 = Total_CN_FG3A / Total_Shots,
+         Pct_FT = 0.44*Total_FTA / Total_Shots) %>%
+  select(seasonType, Pct_RA : Pct_FT) %>%
+  pivot_longer(!seasonType, names_prefix = "Pct_",
+               names_to = "zone",
+               values_to = "pct") %>%
+  mutate(seasonType = factor(seasonType, levels = c("Regular","Playoffs"))) %>%
+  ggplot(aes(x = zone, y = pct, fill = seasonType)) +
+  geom_col(position = 'dodge', color = 'black', width = 0.8) +
+  labs(x = "Zone",
+       y = "% of Scoring Attempts",
+       fill = "Season Type",
+       title = paste(myTEAM, mySEASON, "Shot Distribution"),
+       subtitle = "2022 Season",
+       caption = "Data via NBA.com | Graph by Ayush Batra") +
+  scale_y_continuous(labels = scales::percent) +
+  theme(panel.grid.minor.y = element_line(),
+        legend.position = 'top')
+
+tm_plot
+
+```
+
+Further evidence of the fact that restricted area attempts go down in the Playoffs can be seen by looking at how shots increased and decreased from the regular season to the Playoffs for each team. The graph below shows the proportion of teams that saw an increase or decrease of shots from each zone in the Playoffs.
+
+```{r}
+#| label: zone-increase
+
+ss_zones_plot <- allShots %>%
+  mutate(Total_Shots = Restricted_Area_FGA + In_The_Paint_Non_RA_FGA + Mid_Range_FGA +
+           Above_the_Break_3_FGA + Corner_3_FGA + 0.44*FTA,
+         Pct_RA = Restricted_Area_FGA / Total_Shots,
+         Pct_PT = In_The_Paint_Non_RA_FGA / Total_Shots,
+         Pct_MR = Mid_Range_FGA / Total_Shots,
+         Pct_AB3 = Above_the_Break_3_FGA / Total_Shots,
+         Pct_CN3 = Corner_3_FGA / Total_Shots,
+         Pct_FT = 0.44*FTA / Total_Shots) %>%
+  select(TEAM_NAME, Season, seasonType, GP, Pct_RA, Pct_PT, Pct_MR, Pct_AB3, 
+         Pct_CN3, Pct_FT) %>%
+  pivot_wider(id_cols = c(TEAM_NAME, Season),
+              names_from = seasonType,
+              values_from = c(GP, Pct_RA, Pct_PT, Pct_MR, Pct_AB3, 
+                              Pct_CN3, Pct_FT)) %>%
+  filter(GP_Playoffs >= 8) %>%
+  mutate(Change_RA = Pct_RA_Playoffs - Pct_RA_Regular,
+         Change_PT = Pct_PT_Playoffs - Pct_PT_Regular,
+         Change_MR = Pct_MR_Playoffs - Pct_MR_Regular,
+         Change_AB3 = Pct_AB3_Playoffs - Pct_AB3_Regular,
+         Change_CN3 = Pct_CN3_Playoffs - Pct_CN3_Regular,
+         Change_FT = Pct_FT_Playoffs - Pct_FT_Regular) %>%
+  select(TEAM_NAME, Season, Change_RA, Change_PT, 
+         Change_MR, Change_AB3, Change_CN3, Change_FT) %>%
+  pivot_longer(!c(TEAM_NAME, Season),
+               names_prefix = "Change_",
+               names_to = "Zone",
+               values_to = "Change") %>%
+  mutate(Increase = ifelse(Change > 0, "Increase", "Decrease"),
+         Increase = factor(Increase, levels = c("Increase","Decrease"))) %>%
+  ggplot(aes(y = Zone, fill = Increase)) +
+  geom_bar(position = 'fill', color = 'black') +
+  labs(x = "% of Teams",
+       fill = "Change in Shot Frequency",
+       title = "Shots that Increase/Decrease in Playoffs",
+       subtitle = "Only Includes Teams that Advanced to CSF or further",
+       caption = "Data via NBA.com | Graph by Ayush Batra") +
+  scale_fill_manual(values = c("#B2FF66","#FF6666")) +
+  scale_x_continuous(labels = scales::percent) +
+  theme(legend.position = 'top')
+
+ss_zones_plot
+
+```
+
+The graph above shows the proportion of teams that had an increase of each shot during the Playoffs. 
+
+About 70% of teams that advanced to the conference semi-finals or further saw a decrease in their share of shooting opportunities at the rim. No other shot zone saw nearly as close as a decrease. In contrast, we see three zones with a large proportion of teams that saw an increase: paint (non-restricted area) shots, free throws, and above the break 3-point shots. This means teams can change their shot selection in several ways in the Playoffs, but a decrease in shots at the rim is very frequent.
+
+Lastly, we should look at the entire distribution of changes instead of just the average. It seems like teams are usually facing a decrease in shots from the restricted area. The graph produced by the code below displays the distributions of the changes from each shot zone among teams with a decrease in restricted area shots. Only teams that advanced to the 2nd round of the Playoffs or farther are included (because teams that played just one round may have skewed numbers due to playing just a few games). 
+
+This is a violin plot, so it displays the distributions of the value on the y-axis for each level on the x-axis. 
+
+```{r}
+#| label: violin-plot
+
+change_shots <- allShots %>%
+  mutate(Total_Shots = Restricted_Area_FGA + In_The_Paint_Non_RA_FGA + Mid_Range_FGA +
+           Above_the_Break_3_FGA + Corner_3_FGA + 0.44*FTA,
+         Pct_RA = Restricted_Area_FGA / Total_Shots,
+         Pct_PT = In_The_Paint_Non_RA_FGA / Total_Shots,
+         Pct_MR = Mid_Range_FGA / Total_Shots,
+         Pct_AB3 = Above_the_Break_3_FGA / Total_Shots,
+         Pct_CN3 = Corner_3_FGA / Total_Shots,
+         Pct_FT = 0.44*FTA / Total_Shots) %>%
+  select(TEAM_NAME, Season, seasonType, GP, Pct_RA, Pct_PT, Pct_MR, Pct_AB3, 
+         Pct_CN3, Pct_FT) %>%
+  pivot_wider(id_cols = c(TEAM_NAME, Season),
+              names_from = seasonType,
+              values_from = c(GP, Pct_RA, Pct_PT, Pct_MR, 
+                              Pct_AB3, Pct_CN3, Pct_FT)) %>%
+  filter(!is.na(GP_Playoffs)) %>%
+  filter(GP_Playoffs > 7) %>%
+  mutate(Change_RA = Pct_RA_Playoffs - Pct_RA_Regular,
+         Change_PT = Pct_PT_Playoffs - Pct_PT_Regular,
+         Change_MR = Pct_MR_Playoffs - Pct_MR_Regular,
+         Change_AB3 = Pct_AB3_Playoffs - Pct_AB3_Regular,
+         Change_CN3 = Pct_CN3_Playoffs - Pct_CN3_Regular,
+         Change_FT = Pct_FT_Playoffs - Pct_FT_Regular) %>%
+  select(TEAM_NAME, Season, Change_RA:Change_FT) %>%
+  filter(Change_RA < -0.01) %>%
+  pivot_longer(!c(TEAM_NAME, Season),
+               names_prefix = "Change_",
+               names_to = "shotType",
+               values_to = "Change") 
+
+makeup_plot <- change_shots %>%
+  mutate(Increase = ifelse(Change >= 0, 1, 0)) %>%
+  filter(shotType != "RA") %>%
+  ggplot(aes(x = shotType, y = Change)) +
+  geom_hline(yintercept = 0) +
+  geom_violin(aes(fill = shotType), show.legend = F) +
+  labs(x = "Shot Type",
+       y = "Increase in Shot Frequency",
+       title = "How do Teams Make Up for Restricted Area Shots",
+       subtitle = "Among teams with at least 1% Decrease in RA shots in Playoffs\n Advanced to Conf Semis or further",
+       caption = "Data via NBA.com | Graph by Ayush Batra") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_discrete(labels = c("Above Break 3","Corner 3","Free Throws","Midrange",
+                              "Paint")) 
+
+makeup_plot
+
+```
+
+One feature that stands out is the very long tail on the distribution of increase in shot frequency for paint (non-restricted area) shot attempts. This means that most teams which saw a decrease in restricted area field goal attempts in the Playoffs saw a moderate increase in paint (non-restricted area) shots, but a small number of teams saw very large increases in paint shots. Overall, though, it doesn't look like one distribution is very far off from the others, so teams can make up for fewer restricted area shots by taking more shots in any other zones. 
+
+Finally, we can look at the stats for 2023. In the code below, I used the `getShots` function I created earlier to get the shooting numbers for the 2022-23 season. The plot produced by the code shows the share of shooting attempts from the restricted area on the x-axis and the efficiency on non-restricted area shooting attempts on the y-axis. The teams towards the right rely more heavily on shots at the rim, while the teams on the left don’t rely on shots at the rim as much. Teams located towards the top of the graph are efficient outside of the restricted area, while those towards the bottom are less so. Therefore, the best spot to be on the graph is the top left, while the worst spot is the bottom right.
+
+Note: the `no_playoffs` vector is a list of teams with lower than 25% chance to make the Playoffs according to FiveThirtyEight's NBA predictions on March 27th, 2023. I chose not to include these teams because I wanted to focus on how the teams in the 2023 Playoffs will fare. 
+
+```{r, fig.height = 6, fig.width = 6}
+#| label: 2023-stats
+
+shots23 <- getShots(2023, 2023)
+
+selection23 <- shots23 %>%
+  mutate(Total_Shots = Restricted_Area_FGA + In_The_Paint_Non_RA_FGA + Mid_Range_FGA +
+           Above_the_Break_3_FGA + Corner_3_FGA + 0.44*FTA,
+         Pct_RA = Restricted_Area_FGA / Total_Shots,
+         Pct_PT = In_The_Paint_Non_RA_FGA / Total_Shots,
+         Pct_MR = Mid_Range_FGA / Total_Shots,
+         Pct_AB3 = Above_the_Break_3_FGA / Total_Shots,
+         Pct_CN3 = Corner_3_FGA / Total_Shots,
+         Pct_FT = 0.44*FTA / Total_Shots) %>%
+  select(TEAM_NAME, Pct_RA, Pct_PT, Pct_MR, Pct_AB3, Pct_CN3, Pct_FT)
+
+efficiency23 <- shots23 %>%
+  mutate(RA_FGP = Restricted_Area_FGM / Restricted_Area_FGA,
+         PT_FGP = In_The_Paint_Non_RA_FGM / In_The_Paint_Non_RA_FGA,
+         MR_FGP = Mid_Range_FGM / Mid_Range_FGA,
+         AB3_FGP = Above_the_Break_3_FGM / Above_the_Break_3_FGA,
+         CN3_FGP = Corner_3_FGM / Corner_3_FGA,
+         FT_FTP = FTM / FTA) %>%
+  select(TEAM_NAME, RA_FGP, PT_FGP, MR_FGP, AB3_FGP, CN3_FGP, FT_FTP)
+
+no_playoffs <- c("Utah Jazz",
+                 "Washington Wizards","Indiana Pacers","Portland Trail Blazers",
+                 "Orlando Magic","Houston Rockets",
+                 "Charlotte Hornets","San Antonio Spurs","Detroit Pistons")
+
+logos <- espn_nba_teams() %>%
+  select(display_name, logo)
+
+plot23 <- efficiency23 %>%
+  inner_join(selection23, by = c("TEAM_NAME")) %>%
+  filter(TEAM_NAME %in% no_playoffs == FALSE) %>%
+  left_join(logos, by = c("TEAM_NAME" = "display_name")) %>%
+  mutate(Non_RA_TSP = (Pct_PT*PT_FGP + Pct_MR*MR_FGP + 1.5*Pct_AB3*AB3_FGP +
+           1.5*Pct_CN3*CN3_FGP + 0.5*Pct_FT*FT_FTP/0.44) / (1 - Pct_RA)) %>%
+  mutate(myLab = str_sub(TEAM_NAME, 1, 3),
+         myLab = toupper(myLab)) %>%
+  ggplot(aes(x = Pct_RA, y = Non_RA_TSP)) +
+  geom_image(aes(image = logo), size = 0.13) +
+  labs(x = "% of FGA from Restricted Area",
+       y = "TS% on Non-Restricted Area Shots",
+       title = "2023 Shooting Tendencies and Efficiency",
+       subtitle = "at least 25% chance to Make Playoffs (as of March 27th)",
+       caption = "Data from NBA.com & 538.com | Graph by Ayush Batra") +
+  scale_x_continuous(labels = scales::percent) +
+  scale_y_continuous(labels = scales::percent) 
+
+plot23
+
+```
+
+Note: The results from this graph will change as the season progresses. What is written below applies to the results on March 27th, 2023
+
+Right now, the teams towards the top left of the graph notably include the Warriors and Mavericks. Both of these teams don't take a lot of shots at the rim, and are efficient away from the rim. Since teams usually face a decrease in shots at the rim during the Playoffs, neither the Warriors or Mavs should have a hard time translating their offense to the Playoffs. 
+
+Meanwhile, the Grizzlies and Lakers are teams that are present in the bottom right quadrant of the graph. Both Memphis and Los Angeles shoot a lot of shots at the rim, and both are not very efficient away from the rim. Since shots at the rim usually decrease, both the Grizzlies and the Lakers may have trouble shooting in the Playoffs. 
+Thanks for reading the code! See my article here: 
+
+https://bestballstats.com/2023/03/28/shot-selection-a-surprising-playoff-advantage-or-disadvantage/
+
+
+
