@@ -16,7 +16,6 @@ First, we must load in the necessary packages. The `hoopR` package is a great to
 library(tidyverse)
 library(ggimage)
 library(hoopR)
-library(corrplot)
 
 ```
 
@@ -72,8 +71,8 @@ rsShots <- getShots(2015, 2022)
 plShots <- getShots(2015, 2022, "Playoffs")
 
 # If the function do not work (or are taking too long), uncomment the lines below:
-# rsShots <- read_csv(file = "tm_shots_rs.csv")
-# plShots <- read_csv(file = "tm_shots_pl.csv")
+# rsShots <- read_csv(file = "https://raw.githubusercontent.com/AyushBatra15/Playoff-Shot-Selection/main/data/tm_shots_pl.csv")
+# plShots <- read_csv(file = "https://github.com/AyushBatra15/Playoff-Shot-Selection/blob/main/data/tm_shots_pl.csv")
 
 ```
 
