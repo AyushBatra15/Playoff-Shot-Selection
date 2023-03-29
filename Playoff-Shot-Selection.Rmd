@@ -67,12 +67,12 @@ getShots <- function(start_yr, end_yr, season_type = "Regular Season") {
   return( all_szns )
 }
 
-# rsShots <- getShots(2015, 2022)
-# plShots <- getShots(2015, 2022, "Playoffs")
+rsShots <- getShots(2015, 2022)
+plShots <- getShots(2015, 2022, "Playoffs")
 
 # If the function do not work (or are taking too long), uncomment the lines below:
-rsShots <- read_csv(file = "https://raw.githubusercontent.com/AyushBatra15/Playoff-Shot-Selection/main/data/tm_shots_rs.csv")
-plShots <- read_csv(file = "https://raw.githubusercontent.com/AyushBatra15/Playoff-Shot-Selection/main/data/tm_shots_pl.csv")
+# rsShots <- read_csv(file = "https://raw.githubusercontent.com/AyushBatra15/Playoff-Shot-Selection/main/data/tm_shots_rs.csv")
+# plShots <- read_csv(file = "https://raw.githubusercontent.com/AyushBatra15/Playoff-Shot-Selection/main/data/tm_shots_pl.csv")
 
 ```
 
